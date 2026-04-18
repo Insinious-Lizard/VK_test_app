@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Планировщик встреч</title>
+    <!-- ПОДКЛЮЧАЕМ НАСТОЯЩИЙ VK BRIDGE -->
+    <script src="https://unpkg.com/@vkontakte/vk-bridge@4.0.0/dist/browser.min.js"></script>
     <style>
+        /* ВЕСЬ ТВОЙ CSS ОСТАЁТСЯ БЕЗ ИЗМЕНЕНИЙ */
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -12,10 +15,7 @@
             padding: 16px;
             color: #1c1e21;
         }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-        }
+        .container { max-width: 600px; margin: 0 auto; }
         .card {
             background: white;
             border-radius: 16px;
@@ -40,33 +40,13 @@
             cursor: pointer;
         }
         button:active { opacity: 0.7; }
-        .date-range {
-            display: flex;
-            gap: 10px;
-        }
+        .date-range { display: flex; gap: 10px; }
         .date-range input { width: 50%; }
-        .vote-table {
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 12px;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 10px;
-            text-align: center;
-            min-width: 90px;
-        }
-        th {
-            background: #f0f2f5;
-        }
-        .vote-options {
-            display: flex;
-            gap: 5px;
-            justify-content: center;
-        }
+        .vote-table { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; min-width: 90px; }
+        th { background: #f0f2f5; }
+        .vote-options { display: flex; gap: 5px; justify-content: center; }
         .vote-btn-small {
             background: none;
             border: 1px solid #ccc;
@@ -79,12 +59,7 @@
         .vote-yes { background: #4bb34b; color: white; border: none; }
         .vote-no { background: #e64646; color: white; border: none; }
         .vote-maybe { background: #f7b32b; color: white; border: none; }
-        .status {
-            margin-top: 12px;
-            font-size: 14px;
-            text-align: center;
-            color: green;
-        }
+        .status { margin-top: 12px; font-size: 14px; text-align: center; color: green; }
         .invite-link {
             background: #f0f2f5;
             padding: 8px;
@@ -94,24 +69,9 @@
             margin: 10px 0;
             font-size: 12px;
         }
-        .back-btn {
-            background: #e1e3e6;
-            color: black;
-            margin-bottom: 16px;
-        }
-        .error {
-            color: red;
-            text-align: center;
-            margin-top: 10px;
-        }
-        .debug {
-            font-size: 11px;
-            color: gray;
-            text-align: center;
-            margin-top: 20px;
-            border-top: 1px solid #eee;
-            padding-top: 10px;
-        }
+        .back-btn { background: #e1e3e6; color: black; margin-bottom: 16px; }
+        .error { color: red; text-align: center; margin-top: 10px; }
+        .debug { font-size: 11px; color: gray; text-align: center; margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; }
     </style>
 </head>
 <body>
@@ -147,68 +107,74 @@
 <div class="debug" id="debugInfo">Загрузка...</div>
 
 <script>
-    // ====== СНАЧАЛА СОЗДАЁМ VK BRIDGE (до любого использования) ======
-    window['vk-bridge'] = {
-        send: (method, params) => {
-            console.log('[FAKE VK Bridge]', method, params);
-            if (method === 'VKWebAppInit') {
-                return Promise.resolve({ result: true });
-            }
-            if (method === 'VKWebAppStorageSet') {
-                const key = params.key;
-                const value = params.value;
-                try {
-                    localStorage.setItem(key, value);
-                    return Promise.resolve({ result: true });
-                } catch(e) {
-                    return Promise.reject(e);
-                }
-            }
-            if (method === 'VKWebAppStorageGet') {
-                const keys = params.keys;
-                const result = { keys: [] };
-                for (const key of keys) {
-                    const value = localStorage.getItem(key);
-                    result.keys.push({ key, value: value || '' });
-                }
-                return Promise.resolve(result);
-            }
-            return Promise.resolve({});
-        }
-    };
-    
-    // Теперь можно использовать bridge
-    console.log('VK Bridge emulator initialized');
-    document.getElementById('debugInfo').innerText = '✅ Приложение загружено. Выберите даты и нажмите "Создать опрос"';
-    
+    // ====== НАСТОЯЩИЙ VK BRIDGE (БЕЗ ЭМУЛЯТОРА) ======
+    let bridge = null;
     let currentPollId = null;
     let currentUserName = localStorage.getItem('voter_name') || '';
 
-    function saveToStorage(key, data) {
+    // Функции для работы с хранилищем (через настоящий VK Bridge)
+    async function saveToStorage(key, data) {
         const value = JSON.stringify(data);
-        return window['vk-bridge'].send('VKWebAppStorageSet', { key: `poll_${key}`, value: value })
-            .catch(e => {
-                console.warn('Save error, using localStorage fallback', e);
-                localStorage.setItem(`poll_${key}`, value);
-                return { result: true };
-            });
+        if (bridge) {
+            try {
+                await bridge.send('VKWebAppStorageSet', { key: `poll_${key}`, value: value });
+                console.log('Saved to VK Storage:', key);
+                return;
+            } catch(e) {
+                console.warn('VK Storage error, using localStorage', e);
+            }
+        }
+        // Fallback на localStorage (если не в VK или ошибка)
+        localStorage.setItem(`poll_${key}`, value);
+        console.log('Saved to localStorage fallback');
     }
 
     async function loadFromStorage(key) {
-        try {
-            const result = await window['vk-bridge'].send('VKWebAppStorageGet', { keys: [`poll_${key}`] });
-            const item = result.keys.find(k => k.key === `poll_${key}`);
-            if (item && item.value) {
-                return JSON.parse(item.value);
+        if (bridge) {
+            try {
+                const result = await bridge.send('VKWebAppStorageGet', { keys: [`poll_${key}`] });
+                const item = result.keys.find(k => k.key === `poll_${key}`);
+                if (item && item.value) {
+                    console.log('Loaded from VK Storage:', key);
+                    return JSON.parse(item.value);
+                }
+            } catch(e) {
+                console.warn('VK Storage load error', e);
             }
-        } catch(e) {
-            console.warn('Load error', e);
-            const local = localStorage.getItem(`poll_${key}`);
-            if (local) return JSON.parse(local);
+        }
+        // Fallback на localStorage
+        const local = localStorage.getItem(`poll_${key}`);
+        if (local) {
+            console.log('Loaded from localStorage fallback');
+            return JSON.parse(local);
         }
         return null;
     }
 
+    // Инициализация VK Bridge
+    async function initVKBridge() {
+        if (window['vk-bridge']) {
+            bridge = window['vk-bridge'];
+            try {
+                await bridge.send('VKWebAppInit');
+                console.log('VK Bridge initialized successfully');
+                document.getElementById('debugInfo').innerHTML = '✅ VK Bridge подключен. Данные будут сохраняться в облако VK';
+                return true;
+            } catch(e) {
+                console.warn('VK Bridge init error:', e);
+                document.getElementById('debugInfo').innerHTML = '⚠️ VK Bridge не инициализирован (работаем в локальном режиме)';
+                return false;
+            }
+        } else {
+            console.warn('VK Bridge not loaded');
+            document.getElementById('debugInfo').innerHTML = '⚠️ VK Bridge не загружен (работаем в локальном режиме)';
+            return false;
+        }
+    }
+
+    // Остальные функции (getDatesArray, escapeHtml, showStatus, renderVoteTable, showPollScreen, showCreateScreen, checkUrlForPoll)
+    // остаются ТОЧНО ТАКИМИ ЖЕ, как в предыдущей версии
+    
     function getDatesArray(startDate, endDate) {
         let dates = [];
         let current = new Date(startDate);
@@ -326,7 +292,7 @@
         let poll = await loadFromStorage(pollId);
         if (!poll) {
             document.getElementById('pollTitle').innerText = 'Ошибка: опрос не найден';
-            document.getElementById('debugInfo').innerText = '❌ Опрос не найден: ' + pollId;
+            document.getElementById('debugInfo').innerHTML = '❌ Опрос не найден: ' + pollId;
             return;
         }
 
@@ -422,9 +388,6 @@
             window.location.hash = `poll=${pollId}`;
             showPollScreen(pollId);
         });
-    } else {
-        console.error('Create button not found!');
-        document.getElementById('debugInfo').innerText = '❌ Ошибка: кнопка не найдена';
     }
 
     // Кнопка назад
@@ -450,18 +413,18 @@
         endDateInput.value = nextWeek.toISOString().slice(0,10);
     }
     
-    // Запуск
-    if (!checkUrlForPoll()) {
-        showCreateScreen();
-    }
-    
-    // Восстанавливаем имя из localStorage
-    if (currentUserName) {
-        const userNameInput = document.getElementById('userName');
-        if (userNameInput) userNameInput.value = currentUserName;
-    }
-    
-    console.log('App fully initialized');
+    // ЗАПУСК ПРИЛОЖЕНИЯ
+    (async function() {
+        await initVKBridge();
+        if (!checkUrlForPoll()) {
+            showCreateScreen();
+        }
+        if (currentUserName) {
+            const userNameInput = document.getElementById('userName');
+            if (userNameInput) userNameInput.value = currentUserName;
+        }
+        console.log('App fully initialized');
+    })();
 </script>
 </body>
 </html>
