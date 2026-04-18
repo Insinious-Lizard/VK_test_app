@@ -147,7 +147,7 @@
 <div class="debug" id="debugInfo">Загрузка...</div>
 
 <script>
-    // Простая эмуляция VK Bridge (чтобы не было ошибок сети)
+    // ====== СНАЧАЛА СОЗДАЁМ VK BRIDGE (до любого использования) ======
     window['vk-bridge'] = {
         send: (method, params) => {
             console.log('[FAKE VK Bridge]', method, params);
@@ -177,6 +177,8 @@
         }
     };
     
+    // Теперь можно использовать bridge
+    console.log('VK Bridge emulator initialized');
     document.getElementById('debugInfo').innerText = '✅ Приложение загружено. Выберите даты и нажмите "Создать опрос"';
     
     let currentPollId = null;
@@ -420,6 +422,9 @@
             window.location.hash = `poll=${pollId}`;
             showPollScreen(pollId);
         });
+    } else {
+        console.error('Create button not found!');
+        document.getElementById('debugInfo').innerText = '❌ Ошибка: кнопка не найдена';
     }
 
     // Кнопка назад
@@ -455,6 +460,8 @@
         const userNameInput = document.getElementById('userName');
         if (userNameInput) userNameInput.value = currentUserName;
     }
+    
+    console.log('App fully initialized');
 </script>
 </body>
 </html>
