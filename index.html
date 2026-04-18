@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Планировщик встреч</title>
-    <script src="https://unpkg.com/@vkontakte/vk-bridge@4.0.0/dist/browser.min.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -25,8 +24,7 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         h1 { font-size: 24px; margin-bottom: 8px; }
-        h2 { font-size: 18px; margin-bottom: 16px; }
-        input, button, .vote-btn {
+        input, button {
             width: 100%;
             padding: 12px;
             margin: 8px 0;
@@ -34,13 +32,12 @@
             border: 1px solid #e1e3e6;
             font-size: 16px;
         }
-        button, .vote-btn {
+        button {
             background: #2688eb;
             color: white;
             font-weight: bold;
             border: none;
             cursor: pointer;
-            transition: 0.1s;
         }
         button:active { opacity: 0.7; }
         .date-range {
@@ -64,11 +61,6 @@
         }
         th {
             background: #f0f2f5;
-            font-weight: normal;
-        }
-        .user-name-row td:first-child {
-            background: #eef2fa;
-            font-weight: bold;
         }
         .vote-options {
             display: flex;
@@ -81,13 +73,18 @@
             border-radius: 20px;
             padding: 4px 10px;
             font-size: 14px;
-            color: #333;
             margin: 0 2px;
+            cursor: pointer;
         }
         .vote-yes { background: #4bb34b; color: white; border: none; }
         .vote-no { background: #e64646; color: white; border: none; }
         .vote-maybe { background: #f7b32b; color: white; border: none; }
-        .status { margin-top: 12px; font-size: 14px; color: green; text-align: center; }
+        .status {
+            margin-top: 12px;
+            font-size: 14px;
+            text-align: center;
+            color: green;
+        }
         .invite-link {
             background: #f0f2f5;
             padding: 8px;
@@ -95,37 +92,50 @@
             font-family: monospace;
             word-break: break-all;
             margin: 10px 0;
+            font-size: 12px;
         }
         .back-btn {
             background: #e1e3e6;
             color: black;
             margin-bottom: 16px;
         }
+        .error {
+            color: red;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .debug {
+            font-size: 11px;
+            color: gray;
+            text-align: center;
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
     </style>
 </head>
 <body>
 <div class="container" id="app">
-    <!-- Экран создания встречи -->
     <div id="createScreen">
         <div class="card">
             <h1>📅 Планировщик встреч</h1>
             <p>Создайте опрос для выбора даты</p>
-            <input type="text" id="title" placeholder="Название встречи (например: Корпоратив)" value="Встреча команды">
+            <input type="text" id="title" placeholder="Название встречи" value="Встреча команды">
             <div class="date-range">
                 <input type="date" id="startDate">
                 <input type="date" id="endDate">
             </div>
             <button id="createBtn">✨ Создать опрос</button>
+            <div id="createError" class="error"></div>
         </div>
     </div>
 
-    <!-- Экран голосования (показывается, когда есть pollId) -->
     <div id="pollScreen" style="display:none;">
         <div class="card">
-            <button id="backBtn" class="back-btn">← На главную / Создать новую</button>
+            <button id="backBtn" class="back-btn">← На главную</button>
             <h1 id="pollTitle"></h1>
-            <div id="userSection">
-                <input type="text" id="userName" placeholder="Ваше имя" autocomplete="off">
+            <div>
+                <input type="text" id="userName" placeholder="Ваше имя">
                 <button id="saveNameBtn">Сохранить имя</button>
             </div>
             <div id="voteTableContainer" class="vote-table"></div>
@@ -134,221 +144,69 @@
         </div>
     </div>
 </div>
+<div class="debug" id="debugInfo">Загрузка...</div>
 
 <script>
-    const bridge = window['vk-bridge'];
+    // Простая эмуляция VK Bridge (чтобы не было ошибок сети)
+    window['vk-bridge'] = {
+        send: (method, params) => {
+            console.log('[FAKE VK Bridge]', method, params);
+            if (method === 'VKWebAppInit') {
+                return Promise.resolve({ result: true });
+            }
+            if (method === 'VKWebAppStorageSet') {
+                const key = params.key;
+                const value = params.value;
+                try {
+                    localStorage.setItem(key, value);
+                    return Promise.resolve({ result: true });
+                } catch(e) {
+                    return Promise.reject(e);
+                }
+            }
+            if (method === 'VKWebAppStorageGet') {
+                const keys = params.keys;
+                const result = { keys: [] };
+                for (const key of keys) {
+                    const value = localStorage.getItem(key);
+                    result.keys.push({ key, value: value || '' });
+                }
+                return Promise.resolve(result);
+            }
+            return Promise.resolve({});
+        }
+    };
+    
+    document.getElementById('debugInfo').innerText = '✅ Приложение загружено. Выберите даты и нажмите "Создать опрос"';
+    
     let currentPollId = null;
     let currentUserName = localStorage.getItem('voter_name') || '';
 
-    // Инициализация VK Bridge
-    bridge.send('VKWebAppInit').then(() => {
-        console.log('VK Bridge ready');
-        checkUrlForPoll();
-    }).catch(err => alert('Ошибка инициализации: ' + err));
-
-    // Проверяем, есть ли ID встречи в URL (после #poll=...)
-    function checkUrlForPoll() {
-        const hash = window.location.hash;
-        if (hash && hash.includes('poll=')) {
-            const pollId = hash.split('poll=')[1].split('&')[0];
-            if (pollId) {
-                showPollScreen(pollId);
-                return;
-            }
-        }
-        showCreateScreen();
-    }
-
-    // Создание новой встречи
-    document.getElementById('createBtn')?.addEventListener('click', async () => {
-        const title = document.getElementById('title').value.trim();
-        let start = document.getElementById('startDate').value;
-        let end = document.getElementById('endDate').value;
-
-        if (!title) return alert('Введите название');
-        if (!start || !end) return alert('Выберите даты');
-        if (new Date(start) > new Date(end)) return alert('Дата начала позже окончания');
-
-        // Генерируем уникальный ID
-        const pollId = Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-        const dates = getDatesArray(start, end);
-        
-        const pollData = {
-            title: title,
-            dates: dates,
-            votes: {},    // { "Имя": { "2025-01-01": "yes", ... } }
-            created: Date.now()
-        };
-
-        await saveToStorage(pollId, pollData);
-        // Переходим на страницу голосования
-        window.location.hash = `poll=${pollId}`;
-        showPollScreen(pollId);
-    });
-
-    // Показать экран создания
-    function showCreateScreen() {
-        document.getElementById('createScreen').style.display = 'block';
-        document.getElementById('pollScreen').style.display = 'none';
-        currentPollId = null;
-    }
-
-    // Показать опрос
-    async function showPollScreen(pollId) {
-        currentPollId = pollId;
-        document.getElementById('createScreen').style.display = 'none';
-        document.getElementById('pollScreen').style.display = 'block';
-        
-        // Загружаем данные
-        let poll = await loadFromStorage(pollId);
-        if (!poll) {
-            document.getElementById('pollTitle').innerText = 'Ошибка: опрос не найден';
-            return;
-        }
-
-        document.getElementById('pollTitle').innerText = poll.title;
-        if (currentUserName) {
-            document.getElementById('userName').value = currentUserName;
-        }
-
-        // Ссылка для приглашения
-        const inviteUrl = window.location.href.split('#')[0] + `#poll=${pollId}`;
-        document.getElementById('inviteBlock').innerHTML = `🔗 Ссылка для участников: <br> <a href="${inviteUrl}" target="_blank">${inviteUrl}</a>`;
-
-        renderVoteTable(poll);
-        
-        // Кнопка сохранения имени
-        const saveBtn = document.getElementById('saveNameBtn');
-        const newSaveBtn = saveBtn.cloneNode(true);
-        saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-        newSaveBtn.addEventListener('click', () => {
-            const newName = document.getElementById('userName').value.trim();
-            if (!newName) return alert('Введите имя');
-            currentUserName = newName;
-            localStorage.setItem('voter_name', currentUserName);
-            renderVoteTable(poll); // перерисовываем
-        });
-    }
-
-    // Отрисовка таблицы голосования
-    function renderVoteTable(poll) {
-        const container = document.getElementById('voteTableContainer');
-        const dates = poll.dates;
-        const votes = poll.votes || {};
-        const currentUser = currentUserName;
-
-        // Собираем всех участников
-        let voters = Object.keys(votes);
-        if (currentUser && !voters.includes(currentUser)) {
-            voters.push(currentUser);
-        }
-        voters.sort();
-
-        let html = '<table>';
-        // Шапка с датами
-        html += '<tr><th>Участник</th>';
-        dates.forEach(date => {
-            const formatted = new Date(date).toLocaleDateString('ru-RU', {day:'numeric', month:'short'});
-            html += `<th>${formatted}<br><small>${date}</small></th>`;
-        });
-        html += '</tr>';
-
-        // Строки участников
-        for (let voter of voters) {
-            const userVotes = votes[voter] || {};
-            html += `<tr class="user-name-row"><td style="background:#eef2fa; font-weight:bold;">${escapeHtml(voter)}</td>`;
-            for (let date of dates) {
-                const status = userVotes[date] || '';
-                let statusText = '';
-                let statusClass = '';
-                if (status === 'yes') { statusText = '✅ Да'; statusClass = 'vote-yes'; }
-                else if (status === 'no') { statusText = '❌ Нет'; statusClass = 'vote-no'; }
-                else if (status === 'maybe') { statusText = '🤔 ?'; statusClass = 'vote-maybe'; }
-                else { statusText = '—'; }
-
-                // Если это текущий пользователь, добавляем кнопки
-                if (voter === currentUser && currentUser) {
-                    html += `<td>
-                        <div class="vote-options">
-                            <button class="vote-btn-small vote-yes" data-date="${date}" data-vote="yes">✅</button>
-                            <button class="vote-btn-small vote-no" data-date="${date}" data-vote="no">❌</button>
-                            <button class="vote-btn-small vote-maybe" data-date="${date}" data-vote="maybe">🤔</button>
-                        </div>
-                        <div style="margin-top:4px; font-size:12px;">${statusText}</div>
-                    </td>`;
-                } else {
-                    html += `<td style="background: ${status === 'yes' ? '#e0f5e0' : (status === 'no' ? '#ffe0e0' : (status === 'maybe' ? '#fff0d0' : '#f9f9f9'))}">
-                        ${statusText}
-                    </td>`;
-                }
-            }
-            html += '</tr>';
-        }
-
-        // Строка итогов (сколько Да на каждую дату)
-        html += '<tr style="background:#f4f4f4;"><td><b>Итого Да</b></td>';
-        for (let date of dates) {
-            let countYes = 0;
-            for (let voter of voters) {
-                if (votes[voter] && votes[voter][date] === 'yes') countYes++;
-            }
-            html += `<td><b>${countYes}</b></td>`;
-        }
-        html += '</tr>';
-        html += '</table>';
-        container.innerHTML = html;
-
-        // Навешиваем обработчики для текущего пользователя
-        if (currentUser) {
-            document.querySelectorAll('.vote-btn-small').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    e.stopPropagation();
-                    const date = btn.getAttribute('data-date');
-                    const voteValue = btn.getAttribute('data-vote');
-                    await saveVote(currentPollId, currentUser, date, voteValue);
-                    // Перезагружаем опрос
-                    const updatedPoll = await loadFromStorage(currentPollId);
-                    if (updatedPoll) renderVoteTable(updatedPoll);
-                });
-            });
-        }
-    }
-
-    // Сохранить голос
-    async function saveVote(pollId, userName, date, vote) {
-        let poll = await loadFromStorage(pollId);
-        if (!poll) return;
-        if (!poll.votes[userName]) poll.votes[userName] = {};
-        poll.votes[userName][date] = vote;
-        await saveToStorage(pollId, poll);
-        showStatus(`Голос сохранён: ${date} -> ${vote}`);
-    }
-
-    // Хранилище VK (Storage)
-    async function saveToStorage(key, data) {
+    function saveToStorage(key, data) {
         const value = JSON.stringify(data);
-        try {
-            await bridge.send('VKWebAppStorageSet', { key: `poll_${key}`, value: value });
-        } catch(e) {
-            // fallback на localStorage для локального тестирования без VK
-            console.warn('Bridge error, using localStorage', e);
-            localStorage.setItem(`poll_${key}`, value);
-        }
+        return window['vk-bridge'].send('VKWebAppStorageSet', { key: `poll_${key}`, value: value })
+            .catch(e => {
+                console.warn('Save error, using localStorage fallback', e);
+                localStorage.setItem(`poll_${key}`, value);
+                return { result: true };
+            });
     }
 
     async function loadFromStorage(key) {
         try {
-            const result = await bridge.send('VKWebAppStorageGet', { keys: [`poll_${key}`] });
+            const result = await window['vk-bridge'].send('VKWebAppStorageGet', { keys: [`poll_${key}`] });
             const item = result.keys.find(k => k.key === `poll_${key}`);
-            if (item && item.value) return JSON.parse(item.value);
+            if (item && item.value) {
+                return JSON.parse(item.value);
+            }
         } catch(e) {
+            console.warn('Load error', e);
             const local = localStorage.getItem(`poll_${key}`);
             if (local) return JSON.parse(local);
         }
         return null;
     }
 
-    // Генерация массива дат между start и end (включительно)
     function getDatesArray(startDate, endDate) {
         let dates = [];
         let current = new Date(startDate);
@@ -370,16 +228,233 @@
         });
     }
 
-    function showStatus(msg) {
+    function showStatus(msg, isError = false) {
         const el = document.getElementById('statusMsg');
-        el.innerText = msg;
-        setTimeout(() => el.innerText = '', 2000);
+        if (el) {
+            el.innerText = msg;
+            el.style.color = isError ? 'red' : 'green';
+            setTimeout(() => {
+                if (el) el.innerText = '';
+            }, 3000);
+        }
     }
 
-    document.getElementById('backBtn')?.addEventListener('click', () => {
-        window.location.hash = '';
+    async function renderVoteTable(poll) {
+        const container = document.getElementById('voteTableContainer');
+        if (!container) return;
+        
+        const dates = poll.dates;
+        const votes = poll.votes || {};
+        const currentUser = currentUserName;
+
+        let voters = Object.keys(votes);
+        if (currentUser && !voters.includes(currentUser)) {
+            voters.push(currentUser);
+        }
+        voters.sort();
+
+        let html = '<table><thead><tr><th>Участник</th>';
+        dates.forEach(date => {
+            const formatted = new Date(date).toLocaleDateString('ru-RU', {day:'numeric', month:'short'});
+            html += `<th>${formatted}<br><small>${date}</small></th>`;
+        });
+        html += '</tr></thead><tbody>';
+
+        for (let voter of voters) {
+            const userVotes = votes[voter] || {};
+            html += `<tr><td style="background:#eef2fa; font-weight:bold;">${escapeHtml(voter)}</td>`;
+            for (let date of dates) {
+                const status = userVotes[date] || '';
+                let statusText = '';
+                let statusClass = '';
+                if (status === 'yes') { statusText = '✅ Да'; statusClass = '#e0f5e0'; }
+                else if (status === 'no') { statusText = '❌ Нет'; statusClass = '#ffe0e0'; }
+                else if (status === 'maybe') { statusText = '🤔 ?'; statusClass = '#fff0d0'; }
+                else { statusText = '—'; statusClass = '#f9f9f9'; }
+
+                if (voter === currentUser && currentUser) {
+                    html += `<td>
+                        <div class="vote-options">
+                            <button class="vote-btn-small vote-yes" data-date="${date}" data-vote="yes">✅</button>
+                            <button class="vote-btn-small vote-no" data-date="${date}" data-vote="no">❌</button>
+                            <button class="vote-btn-small vote-maybe" data-date="${date}" data-vote="maybe">🤔</button>
+                        </div>
+                        <div style="margin-top:4px; font-size:12px;">${statusText}</div>
+                    </td>`;
+                } else {
+                    html += `<td style="background:${statusClass}">${statusText}</td>`;
+                }
+            }
+            html += '</tr>';
+        }
+
+        html += '<tr style="background:#f4f4f4;"><td><b>Итого Да</b></td>';
+        for (let date of dates) {
+            let countYes = 0;
+            for (let voter of voters) {
+                if (votes[voter] && votes[voter][date] === 'yes') countYes++;
+            }
+            html += `<td><b>${countYes}</b></td>`;
+        }
+        html += '</tr>';
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        document.querySelectorAll('.vote-btn-small').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const date = btn.getAttribute('data-date');
+                const voteValue = btn.getAttribute('data-vote');
+                let poll = await loadFromStorage(currentPollId);
+                if (!poll) return;
+                if (!poll.votes[currentUserName]) poll.votes[currentUserName] = {};
+                poll.votes[currentUserName][date] = voteValue;
+                await saveToStorage(currentPollId, poll);
+                showStatus(`Голос сохранён: ${date}`);
+                renderVoteTable(poll);
+            });
+        });
+    }
+
+    async function showPollScreen(pollId) {
+        currentPollId = pollId;
+        document.getElementById('createScreen').style.display = 'none';
+        document.getElementById('pollScreen').style.display = 'block';
+        
+        let poll = await loadFromStorage(pollId);
+        if (!poll) {
+            document.getElementById('pollTitle').innerText = 'Ошибка: опрос не найден';
+            document.getElementById('debugInfo').innerText = '❌ Опрос не найден: ' + pollId;
+            return;
+        }
+
+        document.getElementById('pollTitle').innerText = poll.title;
+        if (currentUserName) {
+            document.getElementById('userName').value = currentUserName;
+        }
+
+        const inviteUrl = window.location.href.split('#')[0] + `#poll=${pollId}`;
+        document.getElementById('inviteBlock').innerHTML = `🔗 Ссылка для участников:<br><a href="${inviteUrl}" target="_blank">${inviteUrl}</a>`;
+        
+        await renderVoteTable(poll);
+        
+        const saveBtn = document.getElementById('saveNameBtn');
+        const newSaveBtn = saveBtn.cloneNode(true);
+        saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+        newSaveBtn.addEventListener('click', () => {
+            const newName = document.getElementById('userName').value.trim();
+            if (!newName) {
+                alert('Введите имя');
+                return;
+            }
+            currentUserName = newName;
+            localStorage.setItem('voter_name', currentUserName);
+            showStatus(`Имя сохранено: ${currentUserName}`);
+            renderVoteTable(poll);
+        });
+        
+        document.getElementById('debugInfo').innerHTML = `✅ Опрос загружен: ${poll.title} (ID: ${pollId})`;
+    }
+
+    function showCreateScreen() {
+        document.getElementById('createScreen').style.display = 'block';
+        document.getElementById('pollScreen').style.display = 'none';
+        currentPollId = null;
+    }
+
+    function checkUrlForPoll() {
+        const hash = window.location.hash;
+        if (hash && hash.includes('poll=')) {
+            const pollId = hash.split('poll=')[1].split('&')[0];
+            if (pollId) {
+                showPollScreen(pollId);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Кнопка создания опроса
+    const createBtn = document.getElementById('createBtn');
+    if (createBtn) {
+        createBtn.addEventListener('click', async () => {
+            console.log('Create button clicked');
+            
+            const title = document.getElementById('title').value.trim();
+            const start = document.getElementById('startDate').value;
+            const end = document.getElementById('endDate').value;
+            const errorDiv = document.getElementById('createError');
+            
+            errorDiv.innerText = '';
+            
+            if (!title) {
+                errorDiv.innerText = 'Введите название встречи';
+                return;
+            }
+            if (!start) {
+                errorDiv.innerText = 'Выберите дату начала';
+                return;
+            }
+            if (!end) {
+                errorDiv.innerText = 'Выберите дату окончания';
+                return;
+            }
+            if (new Date(start) > new Date(end)) {
+                errorDiv.innerText = 'Дата начала не может быть позже даты окончания';
+                return;
+            }
+            
+            const pollId = Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+            const dates = getDatesArray(start, end);
+            
+            const pollData = {
+                title: title,
+                dates: dates,
+                votes: {},
+                created: Date.now()
+            };
+            
+            await saveToStorage(pollId, pollData);
+            console.log('Poll created:', pollId);
+            
+            window.location.hash = `poll=${pollId}`;
+            showPollScreen(pollId);
+        });
+    }
+
+    // Кнопка назад
+    const backBtn = document.getElementById('backBtn');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            window.location.hash = '';
+            showCreateScreen();
+        });
+    }
+
+    // Заполняем даты по умолчанию
+    const today = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(today.getDate() + 7);
+    
+    const startDateInput = document.getElementById('startDate');
+    const endDateInput = document.getElementById('endDate');
+    if (startDateInput) {
+        startDateInput.value = today.toISOString().slice(0,10);
+    }
+    if (endDateInput) {
+        endDateInput.value = nextWeek.toISOString().slice(0,10);
+    }
+    
+    // Запуск
+    if (!checkUrlForPoll()) {
         showCreateScreen();
-    });
+    }
+    
+    // Восстанавливаем имя из localStorage
+    if (currentUserName) {
+        const userNameInput = document.getElementById('userName');
+        if (userNameInput) userNameInput.value = currentUserName;
+    }
 </script>
 </body>
 </html>
